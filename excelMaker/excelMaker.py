@@ -9,7 +9,7 @@ import xlsxwriter
 def quantify(h_channel,totalLeafPix):
     count=0
     for index,ele in enumerate(h_channel.flatten()):
-        if ele==0:
+        if ele==255:
             count+=1
 
     percentage=(count/totalLeafPix)*100
@@ -18,7 +18,7 @@ def quantify(h_channel,totalLeafPix):
 
 
 #thresholding
-def applyThresholding(h_channel,threshold):
+def applyThresholding(h_channel,threshold,typeC):
     rows,cols=h_channel.shape
     h_channel=h_channel.reshape(rows*cols)
 
@@ -28,10 +28,21 @@ def applyThresholding(h_channel,threshold):
         else:
             h_channel[index]=255
     h_channel=h_channel.reshape(rows,cols)
-    return np.copy(h_channel)
+    h_channel=cv2.bitwise_not(h_channel)
+    #performing morphological erosion on the image
+    kernel=np.ones((2,2),np.uint8)
+    if typeC=='hsv':
+        eroded_img=cv2.erode(h_channel,kernel,iterations=1)
+    elif typeC=='lab':
+        h_channel=np.array(h_channel,dtype=np.uint8)
+        eroded_img=cv2.erode(h_channel,kernel,iterations=3)
+
+
+    return np.copy(eroded_img)
     # plt.close()
     # plt.imshow(h_channel,cmap='gray')
     # plt.show()
+
 
 #generate the histogram
 def generateHisto(h_channel):
@@ -64,14 +75,17 @@ def generateHisto(h_channel):
     return threshold
 
 #calculate total leafArea
-def calcLeafArea(h_channel):
+def calcLeafArea(imagePath):
     totalLeafPix=0
     #calculating total leaf area
-    for inde,pixel in enumerate(h_channel.flatten()):
-        if pixel==255:
-            continue
-        totalLeafPix+=1
+    image=cv2.cvtColor(cv2.imread(imagePath),cv2.COLOR_BGR2GRAY)
+    _,thresh=cv2.threshold(image,0,255,cv2.THRESH_BINARY)
+    #calculating total leaf area
+    kernel=np.ones((2,2),np.uint8)
+    thresh=cv2.erode(thresh,kernel,iterations=3)
+    totalLeafPix=cv2.countNonZero(thresh)
     return totalLeafPix
+
 
 def improveContrast(h_channel):
     #improving the contrast of the image
@@ -99,17 +113,50 @@ def extractH(imgPath):
     # plt.show()
     return np.copy(h_channel)
 
+#extract the l_channel
+def extractA(imgPath):
+    eb2=cv2.imread(imgPath)
+    eb2=cv2.cvtColor(eb2,cv2.COLOR_BGR2LAB)
+    achannel=eb2[:,:,1]
+    rows,cols=achannel.shape
+    achannel=achannel.reshape(rows*cols)
+    achannelDup=[]
+    for _,pixel in enumerate(achannel.flatten()):
+        if pixel==128:
+            achannelDup.append(255)
+            continue
+        achannelDup.append(255-pixel)
+    achannelDup=np.array(achannelDup).reshape(rows,cols)
+    achannel=np.copy(achannelDup)
+
+    return np.copy(achannel)
 
 
 
+colorSPace=input('Enter the channel you want to extract : ')
+diseaseType=input('Enter the disease type code : ')
+if diseaseType.lower()=='eb':
+    pathToPics='../Tomato Early Blight/EB'
+    headName='Early Blight'
+    if colorSPace.lower()=='lab':
+        file='earlyL.xlsx'
+    elif colorSPace.lower()=='hsv':
+        file='early.xlsx'
+elif diseaseType.lower()=='lb':
+    pathToPics='../Tomato Late Blight/LB'
+    headName='Late Blight'
+    if colorSPace.lower()=='lab':
+        file='lateL.xlsx'
+    elif colorSPace.lower()=='hsv':
+        file='late.xlsx'
 #runner programme
 row=0
-workbook=xlsxwriter.Workbook('results.xlsx')
+workbook=xlsxwriter.Workbook(file)
 worksheet=workbook.add_worksheet()
 worksheet.set_column(0,10,30)
 worksheet.set_default_row(58)
 #read early blight images
-for ele in range(0,10):
+for ele in range(0,51):
     if row==0:
         worksheet.write(row,0,'Sample')
         worksheet.write(row,1,'Image')
@@ -118,20 +165,29 @@ for ele in range(0,10):
         worksheet.write(row,4,'Total Pixels')
         worksheet.write(row,5,'Percentage Infc.')
     else:
-        h_channel=improveContrast(extractH('../Tomato Early Blight/EB{}.jpg'.format(row)))
-        totalArea=calcLeafArea(h_channel)
-        thresh=generateHisto(h_channel)
-        h_channel=applyThresholding(h_channel,thresh)
-        bad,percentage=quantify(h_channel,totalArea)
+        if colorSPace.lower()=='hsv':
+            channel=improveContrast(extractH('{}{}.jpg'.format(pathToPics,row)))
+
+        elif colorSPace.lower()=='lab':
+            channel=improveContrast(extractA('{}{}.jpg'.format(pathToPics,row)))
+        else:
+            print('Invalid details or some error happened')
+            exit()
+        print('{}{}.jpg'.format(pathToPics,row))
+        totalArea=calcLeafArea('{}{}.jpg'.format(pathToPics,row))
+        thresh=generateHisto(channel)
+        channel=applyThresholding(channel,thresh,colorSPace.lower())
+        bad,percentage=quantify(channel,totalArea)
         worksheet.write(row,0,'EB{}'.format(row))
-        worksheet.insert_image(row,1,'../Tomato Early Blight/EB{}.jpg'.format(row),{'x_scale': 0.3, 'y_scale': 0.3})
-        worksheet.write(row,2,'Early Blight')
+        worksheet.insert_image(row,1,'{}{}.jpg'.format(pathToPics,row),{'x_scale': 0.3, 'y_scale': 0.3})
+        worksheet.write(row,2,headName)
         worksheet.write(row,3,bad)
         worksheet.write(row,4,totalArea)
         worksheet.write(row,5,percentage)
 
     row+=1
 workbook.close()
+
 
 
 
